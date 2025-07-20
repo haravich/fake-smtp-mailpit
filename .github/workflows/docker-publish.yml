@@ -1,4 +1,4 @@
-name: custom-ftp-server-mailpit build
+name: fake-smtp-mailpit build
 
 on:
   schedule:
@@ -89,7 +89,7 @@ jobs:
       with:
         # list of Docker images to use as base name for tags
         images: |
-          haravich/custom-ftp-mailpit
+          haravich/fake-smtp-mailpit
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         # generate Docker tags based on the following events/attributes
         tags: |
