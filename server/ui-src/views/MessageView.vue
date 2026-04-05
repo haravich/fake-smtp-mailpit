@@ -28,6 +28,7 @@ export default {
 			mailbox,
 			pagination,
 			message: false,
+			loadReleaseModal: false,
 			errorMessage: false,
 			apiSideNavURI: false,
 			apiSideNavParams: URLSearchParams,
@@ -150,8 +151,9 @@ export default {
 						for (const i in d.Inline) {
 							const a = d.Inline[i];
 							if (a.ContentID !== "") {
+								const escapedCID = a.ContentID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 								d.HTML = d.HTML.replace(
-									new RegExp("(=[\"']?)(cid:" + a.ContentID + ")([\"|'|\\s|\\/|>|;])", "g"),
+									new RegExp("(=[\"']?)(cid:" + escapedCID + ")([\"'|\\s|\\/|>|;])", "g"),
 									"$1" + this.resolve("/api/v1/message/" + d.ID + "/part/" + a.PartID) + "$3",
 								);
 							}
@@ -170,8 +172,9 @@ export default {
 						for (const i in d.Attachments) {
 							const a = d.Attachments[i];
 							if (a.ContentID !== "") {
+								const escapedCID = a.ContentID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 								d.HTML = d.HTML.replace(
-									new RegExp("(=[\"']?)(cid:" + a.ContentID + ")([\"|'|\\s|\\/|>|;])", "g"),
+									new RegExp("(=[\"']?)(cid:" + escapedCID + ")([\"'|\\s|\\/|>|;])", "g"),
 									"$1" + this.resolve("/api/v1/message/" + d.ID + "/part/" + a.PartID) + "$3",
 								);
 							}
@@ -442,7 +445,11 @@ export default {
 				if (pagination.limit !== pagination.defaultLimit) {
 					p.limit = pagination.limit.toString();
 				}
-				this.$router.push("/?" + new URLSearchParams(p).toString());
+				if (p.start || p.limit) {
+					this.$router.push("/?" + new URLSearchParams(p).toString());
+				} else {
+					this.$router.push("/");
+				}
 			}
 		},
 
@@ -451,19 +458,25 @@ export default {
 		},
 
 		initReleaseModal() {
-			this.modal("ReleaseModal").show();
-			window.setTimeout(() => {
-				// delay to allow elements to load / focus
-				this.$refs.ReleaseRef.initTags();
-				document.querySelector('#ReleaseModal input[role="combobox"]').focus();
-			}, 500);
+			// reset releaseMessage to force re-render so default release addresses can be included
+			this.loadReleaseModal = false;
+			this.$nextTick(() => {
+				this.loadReleaseModal = true;
+				this.$nextTick(() => {
+					this.modal("ReleaseModal").show();
+					window.setTimeout(() => {
+						// delay to allow elements to load / focus
+						this.$refs.ReleaseRef.initTags();
+					}, 250);
+				});
+			});
 		},
 	},
 };
 </script>
 
 <template>
-	<div class="navbar navbar-expand-lg navbar-dark row flex-shrink-0 bg-primary text-white d-print-none">
+	<div class="navbar navbar-expand-lg row flex-shrink-0 bg-primary text-white d-print-none" data-bs-theme="dark">
 		<div class="d-none d-xl-block col-xl-3 col-auto pe-0">
 			<RouterLink to="/" class="navbar-brand text-white me-0" @click="pagination.start = 0">
 				<img :src="resolve('/mailpit.svg')" alt="Mailpit" />
@@ -485,11 +498,11 @@ export default {
 				title="Release message"
 				@click="initReleaseModal()"
 			>
-				<i class="bi bi-send"></i>
+				<i class="bi bi-send me-md-2"></i>
 				<span class="d-none d-md-inline">Release</span>
 			</button>
 			<button class="btn btn-outline-light me-1 me-sm-2" title="Delete message" @click="deleteMessage()">
-				<i class="bi bi-trash-fill"></i>
+				<i class="bi bi-trash-fill me-md-2"></i>
 				<span class="d-none d-md-inline">Delete</span>
 			</button>
 		</div>
@@ -707,7 +720,7 @@ export default {
 	<AboutMailpit modals />
 	<AjaxLoader :loading="loading" />
 	<Release
-		v-if="mailbox.uiConfig.MessageRelay && message"
+		v-if="mailbox.uiConfig.MessageRelay && loadReleaseModal"
 		ref="ReleaseRef"
 		:message="message"
 		@delete="deleteMessage"

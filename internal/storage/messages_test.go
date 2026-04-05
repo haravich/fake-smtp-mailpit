@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestTextEmailInserts(t *testing.T) {
 
 	start := time.Now()
 
-	for i := 0; i < testRuns; i++ {
+	for range testRuns {
 		if _, err := Store(&testTextEmail, nil); err != nil {
 			t.Log("error ", err)
 			t.Fail()
@@ -53,7 +54,7 @@ func TestMimeEmailInserts(t *testing.T) {
 
 		start := time.Now()
 
-		for i := 0; i < testRuns; i++ {
+		for range testRuns {
 			if _, err := Store(&testMimeEmail, nil); err != nil {
 				t.Log("error ", err)
 				t.Fail()
@@ -203,4 +204,100 @@ func BenchmarkImportMime(b *testing.B) {
 		}
 	}
 
+}
+
+func TestInlineImageContentIdHandling(t *testing.T) {
+	setup("")
+	defer Close()
+	t.Log("Testing inline content handling")
+	// Test case: Proper inline image with Content-Disposition: inline
+	inlineAttachment, err := os.ReadFile("testdata/inline-attachment.eml")
+	if err != nil {
+		t.Fatalf("Failed to read test email: %v", err)
+	}
+	storedMessage, err := Store(&inlineAttachment, nil)
+	if err != nil {
+		t.Fatal("Failed to store test case 1:", err)
+	}
+
+	msg, err := GetMessage(storedMessage)
+	if err != nil {
+		t.Fatal("Failed to retrieve test case 1:", err)
+	}
+	// Assert
+	if len(msg.Inline) != 1 {
+		t.Errorf("Test case 1: Expected 1 inline attachment, got %d", len(msg.Inline))
+	}
+	if len(msg.Attachments) != 0 {
+		t.Errorf("Test case 1: Expected 0 regular attachments, got %d", len(msg.Attachments))
+	}
+	if msg.Inline[0].ContentID != "test1@example.com" {
+		t.Errorf("Test case 1: Expected ContentID 'test1@example.com', got '%s'", msg.Inline[0].ContentID)
+	}
+}
+
+func TestRegularAttachmentHandling(t *testing.T) {
+	setup("")
+	defer Close()
+	t.Log("Testing regular attachment handling")
+	// Test case: Regular attachment without Content-ID
+	regularAttachment, err := os.ReadFile("testdata/regular-attachment.eml")
+	if err != nil {
+		t.Fatalf("Failed to read test email: %v", err)
+	}
+	storedMessage, err := Store(&regularAttachment, nil)
+	if err != nil {
+		t.Fatal("Failed to store test case 3:", err)
+	}
+	msg, err := GetMessage(storedMessage)
+	if err != nil {
+		t.Fatal("Failed to retrieve test case 3:", err)
+	}
+	// Assert
+	if len(msg.Inline) != 0 {
+		t.Errorf("Test case 3: Expected 0 inline attachments, got %d", len(msg.Inline))
+	}
+	if len(msg.Attachments) != 1 {
+		t.Errorf("Test case 3: Expected 1 regular attachment, got %d", len(msg.Attachments))
+	}
+	if msg.Attachments[0].ContentID != "" {
+		t.Errorf("Test case 3: Expected empty ContentID, got '%s'", msg.Attachments[0].ContentID)
+	}
+
+	// Checksum tests
+	assertEqual(t, msg.Attachments[0].Checksums.MD5, "b04930eb1ba0c62066adfa87e5d262c4", "Attachment MD5 checksum does not match")
+	assertEqual(t, msg.Attachments[0].Checksums.SHA1, "15605d6a2fca44e966209d1701f16ecf816df880", "Attachment SHA1 checksum does not match")
+	assertEqual(t, msg.Attachments[0].Checksums.SHA256, "92c4ccff376003381bd9054d3da7b32a3c5661905b55e3b0728c17aba6d223ec", "Attachment SHA256 checksum does not match")
+}
+
+func TestMixedAttachmentHandling(t *testing.T) {
+	setup("")
+	defer Close()
+	t.Log("Testing mixed attachment handling")
+	// Mixed scenario with both inline and regular attachment
+	mixedAttachment, err := os.ReadFile("testdata/mixed-attachment.eml")
+	if err != nil {
+		t.Fatalf("Failed to read test email: %v", err)
+	}
+	storedMessage, err := Store(&mixedAttachment, nil)
+	if err != nil {
+		t.Fatal("Failed to store test case 4:", err)
+	}
+	msg, err := GetMessage(storedMessage)
+	if err != nil {
+		t.Fatal("Failed to retrieve test case 4:", err)
+	}
+	// Assert: Should have 1 inline (with ContentID) and 1 attachment (without ContentID)
+	if len(msg.Inline) != 1 {
+		t.Errorf("Test case 4: Expected 1 inline attachment, got %d", len(msg.Inline))
+	}
+	if len(msg.Attachments) != 1 {
+		t.Errorf("Test case 4: Expected 1 regular attachment, got %d", len(msg.Attachments))
+	}
+	if msg.Inline[0].ContentID != "inline@example.com" {
+		t.Errorf("Test case 4: Expected inline ContentID 'inline@example.com', got '%s'", msg.Inline[0].ContentID)
+	}
+	if msg.Attachments[0].ContentID != "" {
+		t.Errorf("Test case 4: Expected attachment ContentID to be empty, got '%s'", msg.Attachments[0].ContentID)
+	}
 }

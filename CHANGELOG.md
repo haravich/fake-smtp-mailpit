@@ -2,6 +2,283 @@
 
 Notable changes to Mailpit will be documented in this file.
 
+## [v1.29.6]
+
+### Chore
+- Bump docker/login-action from 3 to 4 ([#670](https://github.com/axllent/mailpit/issues/670))
+- Bump actions/stale from 10.1.1 to 10.2.0 ([#669](https://github.com/axllent/mailpit/issues/669))
+- Bump docker/setup-buildx-action from 3 to 4 ([#668](https://github.com/axllent/mailpit/issues/668))
+- Bump docker/setup-qemu-action from 3 to 4 ([#666](https://github.com/axllent/mailpit/issues/666))
+- Bump docker/build-push-action from 6 to 7 ([#665](https://github.com/axllent/mailpit/issues/665))
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Version check logic in version command and self updater ([#673](https://github.com/axllent/mailpit/issues/673))
+
+
+## [v1.29.5]
+
+### Security
+- Add sandbox attribute to message iframe for extra later of security (already protected via CSP headers)
+
+### Feature
+- Add option to disable auto-VACUUMing of the SQLite database ([#661](https://github.com/axllent/mailpit/issues/661))
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+
+
+## [v1.29.4]
+
+### Feature
+- Add filter functionality to message headers tab
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Refactor webhook delay & rate limit logic to ignore endpoint response times & prevent hardcoded 1000 message limit when set to 0 ([#656](https://github.com/axllent/mailpit/issues/656))
+
+
+## [v1.29.3]
+
+### Security
+- Enhance CORS origin handling to respect host:port distinctions
+- Limit proxy requests to 50MB to prevent OOM attacks
+- Enhance HTML sanitization in message view
+- Enhance HTML sanitization in screenshot generation
+- Escape ContentID in HTML replacement to prevent regex injection
+
+### Chore
+- Use last release + git hash in Docker edge versions
+- Bump minimatch from 10.2.2 to 10.2.4
+- Refactor code with go fix
+- Switch to math/rand/v2
+- Refactor API send authentication logic
+- Refactor events websocket middleware
+- Set timeout for HTTP client in webhook Send function
+- Use local hostname for EHLO/HELO in SMTP communication
+- Simplify HTML decoding function in screenshot generation using DOMParser
+- Set margin & padding to HTML screenshot to prevent transparent top/left border
+- Replace localStorage retrieval with a dedicated function for default release addresses
+- Limit subject length to 100 characters in browser notifications
+- Improve transaction handling in pruneMessages and fix loop continuation in InitDB
+- Update Content-Disposition header to use inline display and escape filename
+- Refactor timezone handling in searchQueryBuilder
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Update SQL query to use tenant when using is:tagged filter
+
+
+## [v1.29.2]
+
+### Security
+- Prevent Server-Side Request Forgery (SSRF) via Link Check API ([GHSA-mpf7-p9x7-96r3](https://github.com/axllent/mailpit/security/advisories/GHSA-mpf7-p9x7-96r3))
+
+### Chore
+- Upgrade eslint JavaScript linting
+- Update Go dependencies
+- Update node dependencies
+- Update caniemail test database
+
+### Fix
+- Update install instructions when setting INSTALL_PATH
+- Include 8BITMIME in SMTPD EHLO response ([#648](https://github.com/axllent/mailpit/issues/648))
+
+
+## [v1.29.1]
+
+### Chore
+- Add CORS error logging and update error messages for failed CORS requests
+- Bump axios from 1.13.4 to 1.13.5
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Enable "Mark all read" button (Inbox) when new message is received
+
+
+## [v1.29.0]
+
+### Feature
+- Include message attachment checksums (MD5, SHA1 & SHA254) in API message summary
+- Option to display/hide attachment information in message view in web UI including checksums, content type & disposition
+
+### Chore
+- Add support for multi-origin CORS settings and apply to events websocket ([#630](https://github.com/axllent/mailpit/issues/630))
+- Add support for webhook delay ([#627](https://github.com/axllent/mailpit/issues/627))
+- Update Go dependencies
+- Update node dependencies
+
+### Test
+- Add CORS tests
+- Add message summary attachment checksum tests
+
+
+## [v1.28.4]
+
+### Chore
+- Increase allowed SMTP email address length to 1024 chars & return clearer SMTP responses for failures ([#620](https://github.com/axllent/mailpit/issues/620))
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Ensure SMTP HELO/EHLO command is issued before MAIL FROM as per RFC 5321 ([#621](https://github.com/axllent/mailpit/issues/621))
+- Prevent nested MAIL command during an active SMTP transaction ([#623](https://github.com/axllent/mailpit/issues/623))
+- Avoid error on image type assertion in thumbnail generation
+
+
+## [v1.28.3]
+
+### Security
+- Ensure SMTP TO & FROM addresses are RFC 5322 compliant and prevent header injection ([GHSA-54wq-72mp-cq7c](https://github.com/axllent/mailpit/security/advisories/GHSA-54wq-72mp-cq7c))
+- Prevent Server-Side Request Forgery (SSRF) via HTML Check API ([GHSA-6jxm-fv7w-rw5j](https://github.com/axllent/mailpit/security/advisories/GHSA-6jxm-fv7w-rw5j))
+
+### Chore
+- Fix formatting and update reporting instructions in SECURITY.md ([#614](https://github.com/axllent/mailpit/issues/614))
+- Allow `@` character in message tags & set max length to 100 characters per tag
+- Update Go dependencies
+- Update node dependencies
+
+### Fix
+- Correctly render default addresses in release modal after settings change ([#594](https://github.com/axllent/mailpit/issues/594))
+- Correctly detect macOS group in install.sh ([#619](https://github.com/axllent/mailpit/issues/619))
+- Auto-tagging using SMTP username using plain auth ([#617](https://github.com/axllent/mailpit/issues/617))
+- Validate maximum lengths of email addresses - RFC5321 (section 4.5.3.1)
+
+### Test
+- Update tag tests with length limits and `@` character
+- Add SMTP tests for address compliancy (RFC 5322) and header injection
+- Add maximum email length validation tests - RFC5321 (section 4.5.3.1)
+
+
+## [v1.28.2]
+
+### Security
+- Prevent Cross-Site WebSocket Hijacking (CSWSH) allowing unauthenticated access to message data [CVE-2026-22689](https://github.com/axllent/mailpit/security/advisories/GHSA-524m-q5m7-79mm)
+
+### Feature
+- Allow default mail addresses to be set when releasing message ([#594](https://github.com/axllent/mailpit/issues/594))
+
+### Chore
+- Remove webkit warnings about missing template / render functions
+- Avoid empty URL query parameter when returning to inbox from message view
+
+
+## [v1.28.1]
+
+### Security
+- Restrict screenshot proxy to only support asset links contained in messages [CVE-2026-21859](https://github.com/axllent/mailpit/security/advisories/GHSA-8v65-47jx-7mfr)
+
+### Chore
+- Bump actions/checkout from 5 to 6 ([#610](https://github.com/axllent/mailpit/issues/610))
+- Bump actions/cache from 4 to 5 ([#607](https://github.com/axllent/mailpit/issues/607))
+- Bump actions/stale from 10.0.0 to 10.1.1 ([#604](https://github.com/axllent/mailpit/issues/604))
+- Bump actions/setup-node from 5 to 6 ([#598](https://github.com/axllent/mailpit/issues/598))
+- Bump esbuild from 0.25.12 to 0.27.2 ([#611](https://github.com/axllent/mailpit/issues/611))
+- Update Go dependencies
+- Update node dependencies
+
+### Test
+- Add inline message tests
+- Increase swagger test timeout
+
+
+## [v1.28.0]
+
+### Feature
+- Optionally propagate SMTP errors ([#588](https://github.com/axllent/mailpit/issues/588))
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+- Update caniemail test database
+
+
+## [v1.27.11]
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+- Add type assertion for value in imaging assignment
+
+
+## [v1.27.10]
+
+### Security
+- Prevent potential information disclosure via indirect expvar library (Prometheus)
+
+### Chore
+- Add tooltip to messages nav dropdown
+- Update GitHub Actions
+- Add tooltip to messages nav dropdown
+- Update GitHub Actions
+- Update Go dependencies
+- Update node dependencies
+
+
+## [v1.27.9]
+
+### Chore
+- UI tweaks to pagination layout for clearer navigation ([#568](https://github.com/axllent/mailpit/issues/568))
+- Add margin to icons in release and delete buttons for consistent spacing
+- Update navbar theme to use data-bs-theme attribute for consistency
+- Update Go dependencies
+- Update node dependencies
+
+
+## [v1.27.8]
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+- Update caniemail test database
+
+
+## [v1.27.7]
+
+### Fix
+- Move HELO/EHLO hostname setting to the correct position in SMTP client creation ([#558](https://github.com/axllent/mailpit/issues/558))
+
+
+## [v1.27.6]
+
+### Feature
+- Add optional --no-release-check to version subcommand ([#557](https://github.com/axllent/mailpit/issues/557))
+
+### Chore
+- Set HELO/EHLO hostname when connecting to external SMTP server ([#556](https://github.com/axllent/mailpit/issues/556))
+- Update Go dependencies
+- Update node dependencies
+
+
+## [v1.27.5]
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+- Update caniemail test database
+
+### Fix
+- Support optional UIDL argument in POP3 server ([#552](https://github.com/axllent/mailpit/issues/552))
+
+
+## [v1.27.4]
+
+### Feature
+- Allow rejected SMTP recipients to be silently dropped ([#549](https://github.com/axllent/mailpit/issues/549))
+
+### Chore
+- Update Go dependencies
+- Update node dependencies
+- Update caniemail test database
+
+
 ## [v1.27.3]
 
 ### Fix
@@ -9,6 +286,10 @@ Notable changes to Mailpit will be documented in this file.
 
 
 ## [v1.27.2]
+
+### Security
+- Prevent integer overflow conversion to uint64
+- Add ReadHeaderTimeout to Prometheus metrics server
 
 ### Feature
 - Add ability to generate self-signed (snakeoil) certificates for UI, SMTP and POP3 ([#539](https://github.com/axllent/mailpit/issues/539))
@@ -24,10 +305,6 @@ Notable changes to Mailpit will be documented in this file.
 - Use MaxMessages to determine pruning ([#536](https://github.com/axllent/mailpit/issues/536))
 - Support angle brackets for text/plain URLs with spaces ([#535](https://github.com/axllent/mailpit/issues/535))
 - Do not check latest release for Prometheus statistics ([#522](https://github.com/axllent/mailpit/issues/522))
-
-### Security
-- Prevent integer overflow conversion to uint64
-- Add ReadHeaderTimeout to Prometheus metrics server
 
 
 ## [v1.27.1]
@@ -1658,6 +1935,9 @@ Notable changes to Mailpit will be documented in this file.
 
 ## [1.1.4]
 
+### Security
+- Add restrictive HTTP Content-Security-Policy
+
 ### Feature
 - Add --quiet flag to display only errors
 
@@ -1665,9 +1945,6 @@ Notable changes to Mailpit will be documented in this file.
 - Remove left & right borders (message list)
 - Add favicon unread message counter
 - Minor UI color change & unread count position adjustment
-
-### Security
-- Add restrictive HTTP Content-Security-Policy
 
 
 ## [1.1.3]
@@ -1755,13 +2032,13 @@ Notable changes to Mailpit will be documented in this file.
 
 ## [0.1.2]
 
-### Feature
-- Optional browser notifications (HTTPS only)
-
 ### Security
 - Use strconv.Atoi() for safe string to int conversions
 - Sanitize mailbox names
 - Don't allow tar files containing a ".."
+
+### Feature
+- Optional browser notifications (HTTPS only)
 
 
 ## [0.1.1]

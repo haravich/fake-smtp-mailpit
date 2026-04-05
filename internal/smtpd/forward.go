@@ -4,25 +4,31 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/smtp"
+	"os"
 	"strings"
 
 	"github.com/axllent/mailpit/config"
 	"github.com/axllent/mailpit/internal/logger"
 	"github.com/axllent/mailpit/internal/tools"
+	"github.com/pkg/errors"
 )
 
 // Wrapper to forward messages if configured
-func autoForwardMessage(from string, data *[]byte) {
+func autoForwardMessage(from string, data *[]byte) error {
 	if config.SMTPForwardConfig.Host == "" {
-		return
+		return nil
 	}
 
 	if err := forward(from, *data); err != nil {
-		logger.Log().Errorf("[forward] error: %s", err.Error())
-	} else {
-		logger.Log().Debugf("[forward] message from %s to %s via %s:%d",
-			from, config.SMTPForwardConfig.To, config.SMTPForwardConfig.Host, config.SMTPForwardConfig.Port)
+		return errors.WithMessage(err, "[forward] error: %s")
 	}
+
+	logger.Log().Debugf(
+		"[forward] message from %s to %s via %s:%d",
+		from, config.SMTPForwardConfig.To, config.SMTPForwardConfig.Host, config.SMTPForwardConfig.Port,
+	)
+
+	return nil
 }
 
 func createForwardingSMTPClient(config config.SMTPForwardConfigStruct, addr string) (*smtp.Client, error) {
@@ -48,6 +54,13 @@ func createForwardingSMTPClient(config config.SMTPForwardConfigStruct, addr stri
 	client, err := smtp.Dial(addr)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to %s: %v", addr, err)
+	}
+
+	// Set the hostname for HELO/EHLO
+	if hostname, err := os.Hostname(); err == nil {
+		if err := client.Hello(hostname); err != nil {
+			return nil, fmt.Errorf("error saying HELO/EHLO to %s: %v", addr, err)
+		}
 	}
 
 	if config.STARTTLS {
@@ -95,11 +108,14 @@ func forward(from string, msg []byte) error {
 		return fmt.Errorf("error response to MAIL command: %s", err.Error())
 	}
 
-	to := strings.Split(config.SMTPForwardConfig.To, ",")
+	to := strings.SplitSeq(config.SMTPForwardConfig.To, ",")
 
-	for _, addr := range to {
+	for addr := range to {
 		if err = c.Rcpt(addr); err != nil {
 			logger.Log().Warnf("error response to RCPT command for %s: %s", addr, err.Error())
+			if config.SMTPForwardConfig.ForwardSMTPErrors {
+				return errors.WithMessagef(err, "error response to RCPT command for %s", addr)
+			}
 		}
 	}
 

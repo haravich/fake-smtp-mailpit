@@ -86,6 +86,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&config.Database, "database", "d", config.Database, "Database to store persistent data")
 	rootCmd.Flags().BoolVar(&config.DisableWAL, "disable-wal", config.DisableWAL, "Disable WAL for local database (allows NFS mounted DBs)")
 	rootCmd.Flags().BoolVar(&config.DisableVersionCheck, "disable-version-check", config.DisableVersionCheck, "Disable version update checking")
+	rootCmd.Flags().BoolVar(&config.DisableAutoVACUUM, "disable-auto-vacuum", config.DisableAutoVACUUM, "Disable auto-VACUUM for the database")
 	rootCmd.Flags().IntVar(&config.Compression, "compression", config.Compression, "Compression level to store raw messages (0-3)")
 	rootCmd.Flags().StringVar(&config.Label, "label", config.Label, "Optional label identify this Mailpit instance")
 	rootCmd.Flags().StringVar(&config.TenantID, "tenant-id", config.TenantID, "Database tenant ID to isolate data")
@@ -103,8 +104,9 @@ func init() {
 	rootCmd.Flags().StringVar(&config.UIAuthFile, "ui-auth-file", config.UIAuthFile, "A password file for web UI & API authentication")
 	rootCmd.Flags().StringVar(&config.UITLSCert, "ui-tls-cert", config.UITLSCert, "TLS certificate for web UI (HTTPS) - requires ui-tls-key")
 	rootCmd.Flags().StringVar(&config.UITLSKey, "ui-tls-key", config.UITLSKey, "TLS key for web UI (HTTPS) - requires ui-tls-cert")
-	rootCmd.Flags().StringVar(&server.AccessControlAllowOrigin, "api-cors", server.AccessControlAllowOrigin, "Set API CORS Access-Control-Allow-Origin header")
+	rootCmd.Flags().StringVar(&server.AccessControlAllowOrigin, "api-cors", server.AccessControlAllowOrigin, "Set CORS origin(s) for the API, comma-separated (eg: example.com,foo.com)")
 	rootCmd.Flags().BoolVar(&config.BlockRemoteCSSAndFonts, "block-remote-css-and-fonts", config.BlockRemoteCSSAndFonts, "Block access to remote CSS & fonts")
+	rootCmd.Flags().BoolVar(&config.AllowInternalHTTPRequests, "allow-internal-http-requests", config.AllowInternalHTTPRequests, "Allow link-checker & screenshots to access internal IP addresses")
 	rootCmd.Flags().StringVar(&config.EnableSpamAssassin, "enable-spamassassin", config.EnableSpamAssassin, "Enable integration with SpamAssassin")
 	rootCmd.Flags().BoolVar(&config.AllowUntrustedTLS, "allow-untrusted-tls", config.AllowUntrustedTLS, "Do not verify HTTPS certificates (link checker & screenshots)")
 	rootCmd.Flags().BoolVar(&config.DisableHTTPCompression, "disable-http-compression", config.DisableHTTPCompression, "Disable HTTP compression support (web UI & API)")
@@ -126,6 +128,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&config.SMTPStrictRFCHeaders, "smtp-strict-rfc-headers", config.SMTPStrictRFCHeaders, "Return SMTP error if message headers contain <CR><CR><LF>")
 	rootCmd.Flags().IntVar(&config.SMTPMaxRecipients, "smtp-max-recipients", config.SMTPMaxRecipients, "Maximum SMTP recipients allowed")
 	rootCmd.Flags().StringVar(&config.SMTPAllowedRecipients, "smtp-allowed-recipients", config.SMTPAllowedRecipients, "Only allow SMTP recipients matching a regular expression (default allow all)")
+	rootCmd.Flags().BoolVar(&config.SMTPIgnoreRejectedRecipients, "smtp-ignore-rejected-recipients", config.SMTPIgnoreRejectedRecipients, "Ignore rejected SMTP recipients with 2xx response")
 	rootCmd.Flags().BoolVar(&smtpd.DisableReverseDNS, "smtp-disable-rdns", smtpd.DisableReverseDNS, "Disable SMTP reverse DNS lookups")
 
 	// SMTP relay
@@ -159,6 +162,7 @@ func init() {
 	// Webhook
 	rootCmd.Flags().StringVar(&config.WebhookURL, "webhook-url", config.WebhookURL, "Send a webhook request for new messages")
 	rootCmd.Flags().IntVar(&webhook.RateLimit, "webhook-limit", webhook.RateLimit, "Limit webhook requests per second")
+	rootCmd.Flags().IntVar(&webhook.Delay, "webhook-delay", webhook.Delay, "Delay in seconds before sending webhook requests (default 0)")
 
 	// DEPRECATED FLAG 2024/04/12 - but will not be removed to maintain backwards compatibility
 	rootCmd.Flags().StringVar(&config.Database, "db-file", config.Database, "Database file to store persistent data")
@@ -198,6 +202,8 @@ func initConfigFromEnv() {
 	config.DisableWAL = getEnabledFromEnv("MP_DISABLE_WAL")
 
 	config.DisableVersionCheck = getEnabledFromEnv("MP_DISABLE_VERSION_CHECK")
+
+	config.DisableAutoVACUUM = getEnabledFromEnv("MP_DISABLE_AUTO_VACUUM")
 
 	if len(os.Getenv("MP_COMPRESSION")) > 0 {
 		config.Compression, _ = strconv.Atoi(os.Getenv("MP_COMPRESSION"))
@@ -247,6 +253,9 @@ func initConfigFromEnv() {
 	}
 	if getEnabledFromEnv("MP_BLOCK_REMOTE_CSS_AND_FONTS") {
 		config.BlockRemoteCSSAndFonts = true
+	}
+	if getEnabledFromEnv("MP_ALLOW_INTERNAL_HTTP_REQUESTS") {
+		config.AllowInternalHTTPRequests = true
 	}
 	if len(os.Getenv("MP_ENABLE_SPAMASSASSIN")) > 0 {
 		config.EnableSpamAssassin = os.Getenv("MP_ENABLE_SPAMASSASSIN")
@@ -301,6 +310,9 @@ func initConfigFromEnv() {
 	if len(os.Getenv("MP_SMTP_ALLOWED_RECIPIENTS")) > 0 {
 		config.SMTPAllowedRecipients = os.Getenv("MP_SMTP_ALLOWED_RECIPIENTS")
 	}
+	if getEnabledFromEnv("MP_SMTP_IGNORE_REJECTED_RECIPIENTS") {
+		config.SMTPIgnoreRejectedRecipients = true
+	}
 	if getEnabledFromEnv("MP_SMTP_DISABLE_RDNS") {
 		smtpd.DisableReverseDNS = true
 	}
@@ -328,6 +340,7 @@ func initConfigFromEnv() {
 	config.SMTPRelayConfig.AllowedRecipients = os.Getenv("MP_SMTP_RELAY_ALLOWED_RECIPIENTS")
 	config.SMTPRelayConfig.BlockedRecipients = os.Getenv("MP_SMTP_RELAY_BLOCKED_RECIPIENTS")
 	config.SMTPRelayConfig.PreserveMessageIDs = getEnabledFromEnv("MP_SMTP_RELAY_PRESERVE_MESSAGE_IDS")
+	config.SMTPRelayConfig.ForwardSMTPErrors = getEnabledFromEnv("MP_SMTP_RELAY_FWD_SMTP_ERRORS")
 
 	// SMTP forwarding
 	config.SMTPForwardConfigFile = os.Getenv("MP_SMTP_FORWARD_CONFIG")
@@ -346,6 +359,7 @@ func initConfigFromEnv() {
 	config.SMTPForwardConfig.ReturnPath = os.Getenv("MP_SMTP_FORWARD_RETURN_PATH")
 	config.SMTPForwardConfig.OverrideFrom = os.Getenv("MP_SMTP_FORWARD_OVERRIDE_FROM")
 	config.SMTPForwardConfig.To = os.Getenv("MP_SMTP_FORWARD_TO")
+	config.SMTPForwardConfig.ForwardSMTPErrors = getEnabledFromEnv("MP_SMTP_FORWARD_FWD_SMTP_ERRORS")
 
 	// Chaos
 	chaos.Enabled = getEnabledFromEnv("MP_ENABLE_CHAOS")
@@ -380,6 +394,9 @@ func initConfigFromEnv() {
 	}
 	if len(os.Getenv("MP_WEBHOOK_LIMIT")) > 0 {
 		webhook.RateLimit, _ = strconv.Atoi(os.Getenv("MP_WEBHOOK_LIMIT"))
+	}
+	if len(os.Getenv("MP_WEBHOOK_DELAY")) > 0 {
+		webhook.Delay, _ = strconv.Atoi(os.Getenv("MP_WEBHOOK_DELAY"))
 	}
 
 	// Demo mode

@@ -2,6 +2,7 @@
 import AjaxLoader from "../AjaxLoader.vue";
 import CommonMixins from "../../mixins/CommonMixins";
 import { domToPng } from "modern-screenshot";
+import DOMPurify from "dompurify";
 
 export default {
 	components: {
@@ -27,9 +28,13 @@ export default {
 	methods: {
 		initScreenshot() {
 			this.loading = 1;
+			const baseUrl = `${location.protocol}//${location.host}/`;
+			// absolute proxy URL
+			const proxy = new URL(this.resolve("/proxy"), baseUrl).href;
+			const urlRegex = /(url\(('|")?(https?:\/\/[^)'"]+)('|")?\))/gim;
+
 			// remove base tag, if set
 			let h = this.message.HTML.replace(/<base .*>/im, "");
-			const proxy = this.resolve("/proxy");
 
 			// Outlook hacks - else screenshot returns blank image
 			h = h.replace(/<html [^>]+>/gim, "<html>"); // remove html attributes
@@ -37,38 +42,62 @@ export default {
 			h = h.replace(/<o:/gm, "<"); // replace `<o:p>` tags with `<p>`
 			h = h.replace(/<\/o:/gm, "</"); // replace `</o:p>` tags with `</p>`
 
-			// update any inline `url(...)` absolute links
-			const urlRegex = /(url\(('|")?(https?:\/\/[^)'"]+)('|")?\))/gim;
-			h = h.replaceAll(urlRegex, (match, p1, p2, p3) => {
-				if (typeof p2 === "string") {
-					return `url(${p2}${proxy}?url=` + encodeURIComponent(this.decodeEntities(p3)) + `${p2})`;
-				}
-				return `url(${proxy}?url=` + encodeURIComponent(this.decodeEntities(p3)) + `)`;
+			// Sanitize HTML before writing to the temporary document.
+			// This removes <script>, <noscript>, inline event handlers (on*),
+			// SVG <animate>/<set> with xlink:href and other active content
+			// that manual tag removal would miss.
+			h = DOMPurify.sanitize(h, {
+				WHOLE_DOCUMENT: true,
+				FORCE_BODY: false,
+				ADD_TAGS: ["link", "meta", "o:p", "style"],
+				ADD_ATTR: [
+					"bordercolor",
+					"charset",
+					"content",
+					"hspace",
+					"http-equiv",
+					"itemprop",
+					"itemscope",
+					"itemtype",
+					"vertical-align",
+					"vlink",
+					"vspace",
+					"xml:lang",
+					"background", // needed for background= URL replacement below
+				],
+				FORBID_TAGS: ["script", "noscript"],
 			});
 
 			// create temporary document to manipulate
 			const doc = document.implementation.createHTMLDocument();
 			doc.open();
-			doc.write(h);
+			doc.writeln(h);
 			doc.close();
 
-			// remove any <script> tags
-			const scripts = doc.getElementsByTagName("script");
-			for (const i of scripts) {
-				i.parentNode.removeChild(i);
+			// replace any url(...) links in <style> blocks
+			const styles = doc.getElementsByTagName("style");
+			for (const i of styles) {
+				i.innerHTML = i.innerHTML.replaceAll(urlRegex, (match, p1, p2, p3) => {
+					if (typeof p2 === "string") {
+						// quoted URL
+						return (
+							`url(${p2}${proxy}?data=` + btoa(this.message.ID + ":" + this.decodeEntities(p3)) + `${p2})`
+						);
+					}
+					return `url(${proxy}?data=` + btoa(this.message.ID + ":" + this.decodeEntities(p3)) + `)`;
+				});
 			}
 
 			// replace stylesheet links with proxy links
 			const stylesheets = doc.getElementsByTagName("link");
 			for (const i of stylesheets) {
 				const src = i.getAttribute("href");
-
 				if (
 					src &&
 					src.match(/^https?:\/\//i) &&
 					src.indexOf(window.location.origin + window.location.pathname) !== 0
 				) {
-					i.setAttribute("href", `${proxy}?url=` + encodeURIComponent(this.decodeEntities(src)));
+					i.setAttribute("href", `${proxy}?data=` + btoa(this.message.ID + ":" + this.decodeEntities(src)));
 				}
 			}
 
@@ -81,7 +110,7 @@ export default {
 					src.match(/^https?:\/\//i) &&
 					src.indexOf(window.location.origin + window.location.pathname) !== 0
 				) {
-					i.setAttribute("src", `${proxy}?url=` + encodeURIComponent(this.decodeEntities(src)));
+					i.setAttribute("src", `${proxy}?data=` + btoa(this.message.ID + ":" + this.decodeEntities(src)));
 				}
 			}
 
@@ -96,7 +125,10 @@ export default {
 					src.indexOf(window.location.origin + window.location.pathname) !== 0
 				) {
 					// replace with proxy link
-					i.setAttribute("background", `${proxy}?url=` + encodeURIComponent(this.decodeEntities(src)));
+					i.setAttribute(
+						"background",
+						`${proxy}?data=` + btoa(this.message.ID + ":" + this.decodeEntities(src)),
+					);
 				}
 			}
 
@@ -106,11 +138,7 @@ export default {
 
 		// HTML decode function
 		decodeEntities(s) {
-			const e = document.createElement("div");
-			e.innerHTML = s;
-			const str = e.textContent;
-			e.textContent = "";
-			return str;
+			return new DOMParser().parseFromString(s, "text/html").body.textContent;
 		},
 
 		doScreenshot() {
@@ -132,11 +160,18 @@ export default {
 
 			const body = i.contentWindow.document.querySelector("body");
 
+			// Add body padding to prevent content touching edge of screenshot.
+			body.style.padding = "20px";
+
 			// take screenshot of iframe
 			domToPng(body, {
 				backgroundColor: "#ffffff",
-				height: i.contentWindow.document.body.scrollHeight + 20,
+				height: i.contentWindow.document.body.scrollHeight,
 				width,
+				// remove the transparent 8px top and left gap from html object (default browser margins).
+				style: {
+					margin: "0",
+				},
 			}).then((dataUrl) => {
 				const link = document.createElement("a");
 				link.download = this.message.ID + ".png";

@@ -104,8 +104,56 @@ func TestCmdEHLO(t *testing.T) {
 	// See RFC 2821 section 4.1.4 for more detail.
 	cmdCode(t, conn, "MAIL FROM:<sender@example.com>", "250")
 	cmdCode(t, conn, "RCPT TO:<recipient@example.com>", "250")
+
+	// test invalid addresses & header injection
+	cmdCode(t, conn, "RCPT TO: <recipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipientreciprecipientrecipientrecipientreciptrecipientrecipientrecipient@exampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexample.com>", "500") // too long
+	cmdCode(t, conn, "RCPT TO:<recipientexample.com>", "553")
+	cmdCode(t, conn, "RCPT TO: <recipient@test@example.com>", "553")
+	cmdCode(t, conn, "RCPT TO: <recipient@@example.com>", "553")
+	cmdCode(t, conn, "RCPT TO: <recipientexample.com>", "553")
+	cmdCode(t, conn, "RCPT TO:  <recipientexample.com>", "501")
+	cmdCode(t, conn, "RCPT TO:<recipient\rexample.com>", "553")
+	cmdCode(t, conn, "RCPT TO: <recipient\rexample.com>", "553")
+	cmdCode(t, conn, "RCPT TO:  <recipient\rexample.com>", "501")
+	cmdCode(t, conn, "RCPT TO: <>", "501") // empty address not allowed here
+
 	cmdCode(t, conn, "EHLO host.example.com", "250")
 	cmdCode(t, conn, "DATA", "503")
+
+	cmdCode(t, conn, "QUIT", "221")
+	_ = conn.Close()
+}
+
+func TestCmdMAILBeforeEHLO(t *testing.T) {
+	conn := newConn(t, &Server{})
+	// RFC 5321 §4.1.4 — Order of Commands states (emphasis added):
+	// “The SMTP client MUST issue HELO or EHLO before any other SMTP commands.”
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com>", "503")
+
+	cmdCode(t, conn, "QUIT", "221")
+	_ = conn.Close()
+}
+
+func TestCmdMAILAfterRCPT(t *testing.T) {
+	conn := newConn(t, &Server{})
+
+	// Send EHLO, expect greeting
+	cmdCode(t, conn, "EHLO host.example.com", "250")
+
+	// Send MAIL FROM
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com>", "250")
+
+	// Send RCPT TO
+	cmdCode(t, conn, "RCPT TO:<recipient@example.com>", "250")
+
+	// MAIL FROM must not come after RCPT TO in the same transaction
+	cmdCode(t, conn, "MAIL FROM:<sender2@example.com>", "503")
+
+	// RSET to clear the transaction
+	cmdCode(t, conn, "RSET", "250")
+
+	// Now the MAIL FROM should be accepted
+	cmdCode(t, conn, "MAIL FROM:<sender2@example.com>", "250")
 
 	cmdCode(t, conn, "QUIT", "221")
 	_ = conn.Close()
@@ -131,7 +179,7 @@ func TestCmdMAIL(t *testing.T) {
 
 	// MAIL with no FROM arg should return 501 syntax error
 	cmdCode(t, conn, "MAIL", "501")
-	// MAIL with empty FROM arg should return 501 syntax error
+	// // MAIL with empty FROM arg should return 501 syntax error
 	cmdCode(t, conn, "MAIL FROM:", "501")
 	cmdCode(t, conn, "MAIL FROM: ", "501")
 	cmdCode(t, conn, "MAIL FROM:  ", "501")
@@ -145,6 +193,20 @@ func TestCmdMAIL(t *testing.T) {
 	// MAIL with seemingly valid but noncompliant FROM arg (double space after the colon) should return 501 syntax error
 	cmdCode(t, conn, "MAIL FROM:  <sender@example.com>", "501")
 
+	// test invalid addresses & header injection
+	cmdCode(t, conn, "MAIL FROM: <sendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersendersender@exampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexampleexample.com>", "500") // too long
+	cmdCode(t, conn, "MAIL FROM:<sender\rexample.com>", "553")
+	cmdCode(t, conn, "MAIL FROM: <sender\rexample.com>", "553")
+	cmdCode(t, conn, "MAIL FROM:  <sender\rexample.com>", "501")
+	cmdCode(t, conn, "MAIL FROM:<senderexample.com>", "553")
+	cmdCode(t, conn, "MAIL FROM: <sender@@example.com>", "553")
+	cmdCode(t, conn, "MAIL FROM: <sender@test@example.com>", "553")
+	cmdCode(t, conn, "MAIL FROM: <senderexample.com>", "553")
+	cmdCode(t, conn, "MAIL FROM:  <senderexample.com>", "501")
+	cmdCode(t, conn, "MAIL FROM: < sender@example.com >", "553")
+	cmdCode(t, conn, "MAIL FROM: < sender@example.com>", "553")
+	cmdCode(t, conn, "MAIL FROM: <sender@example.com >", "553")
+
 	// MAIL with valid SIZE parameter should return 250 Ok
 	cmdCode(t, conn, "MAIL FROM:<sender@example.com> SIZE=1000", "250")
 
@@ -153,10 +215,10 @@ func TestCmdMAIL(t *testing.T) {
 	cmdCode(t, conn, "MAIL FROM:<sender@example.com> SIZE= ", "501")
 	cmdCode(t, conn, "MAIL FROM:<sender@example.com> SIZE=foo", "501")
 
-	// MAIL with options should be ignored except for SIZE
-	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME", "250")           // ignored
-	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME,SIZE=1000", "250") // size detected
-	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME,SIZE=foo", "501")  // ignored
+	// MAIL with BODY parameter should be accepted (8BITMIME support)
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME", "250")
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME,SIZE=1000", "250")
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME,SIZE=foo", "501") // SIZE validation error
 
 	// TODO: MAIL with valid AUTH parameter should return 250 Ok
 
@@ -212,6 +274,7 @@ func TestCmdRCPT(t *testing.T) {
 	cmdCode(t, conn, "RCPT TO:", "501")
 	cmdCode(t, conn, "RCPT TO: ", "501")
 	cmdCode(t, conn, "RCPT TO:  ", "501")
+	cmdCode(t, conn, "RCPT TO:<@route.example user@example.com>", "553")
 
 	// RCPT with valid TO arg should return 250 Ok
 	cmdCode(t, conn, "RCPT TO:<recipient@example.com>", "250")
@@ -716,8 +779,8 @@ func parseExtensions(t *testing.T, greeting string) map[string]string {
 
 			// Add line as extension.
 			line = strings.TrimSpace(line[4:]) // Strip code prefix and trailing \r\n
-			if idx := strings.Index(line, " "); idx != -1 {
-				extensions[line[:idx]] = line[idx+1:]
+			if before, after, ok := strings.Cut(line, " "); ok {
+				extensions[before] = after
 			} else {
 				extensions[line] = ""
 			}
@@ -821,6 +884,105 @@ func TestMakeEHLOResponse(t *testing.T) {
 	if !rePlain.MatchString(extensions["AUTH"]) {
 		t.Errorf("AUTH mechanism PLAIN does not appear in the extension list when an AuthHandler is specified and TLS is in use")
 	}
+
+	// 8BITMIME should always be advertised
+	s.srv = &Server{}
+	s.tls = false
+	extensions = parseExtensions(t, s.makeEHLOResponse())
+	if _, ok := extensions["8BITMIME"]; !ok {
+		t.Errorf("8BITMIME does not appear in the extension list")
+	}
+
+	// SMTPUTF8 should always be advertised
+	if _, ok := extensions["SMTPUTF8"]; !ok {
+		t.Errorf("SMTPUTF8 does not appear in the extension list")
+	}
+
+	// ENHANCEDSTATUSCODES should always be advertised
+	if _, ok := extensions["ENHANCEDSTATUSCODES"]; !ok {
+		t.Errorf("ENHANCEDSTATUSCODES does not appear in the extension list")
+	}
+}
+
+// Test 8BITMIME BODY parameter parsing in MAIL FROM command
+func TestCmd8BITMIME(t *testing.T) {
+	srv := &Server{}
+	conn := newConn(t, srv)
+	cmdCode(t, conn, "EHLO host.example.com", "250")
+
+	// Create a session to check internal state
+	clientConn, serverConn := net.Pipe()
+	session := srv.newSession(serverConn)
+	go session.serve()
+
+	// Read and discard banner
+	_, _ = bufio.NewReader(clientConn).ReadString('\n')
+
+	// Send EHLO
+	_, _ = fmt.Fprintf(clientConn, "EHLO test.example.com\r\n")
+	reader := bufio.NewReader(clientConn)
+	for {
+		line, _ := reader.ReadString('\n')
+		if strings.HasPrefix(line, "250 ") {
+			break
+		}
+	}
+
+	// Test BODY=8BITMIME parameter
+	_, _ = fmt.Fprintf(clientConn, "MAIL FROM:<sender@example.com> BODY=8BITMIME\r\n")
+	resp, _ := reader.ReadString('\n')
+	if !strings.HasPrefix(resp, "250") {
+		t.Errorf("MAIL FROM with BODY=8BITMIME failed: %s", resp)
+	}
+
+	// Verify bodyEncoding was set (we can't directly access it, but we can test the behavior)
+	// Reset and test BODY=7BIT
+	_, _ = fmt.Fprintf(clientConn, "RSET\r\n")
+	_, _ = reader.ReadString('\n')
+
+	_, _ = fmt.Fprintf(clientConn, "MAIL FROM:<sender@example.com> BODY=7BIT\r\n")
+	resp, _ = reader.ReadString('\n')
+	if !strings.HasPrefix(resp, "250") {
+		t.Errorf("MAIL FROM with BODY=7BIT failed: %s", resp)
+	}
+
+	// Test BODY parameter with SIZE parameter
+	_, _ = fmt.Fprintf(clientConn, "RSET\r\n")
+	_, _ = reader.ReadString('\n')
+
+	_, _ = fmt.Fprintf(clientConn, "MAIL FROM:<sender@example.com> SIZE=1000 BODY=8BITMIME\r\n")
+	resp, _ = reader.ReadString('\n')
+	if !strings.HasPrefix(resp, "250") {
+		t.Errorf("MAIL FROM with SIZE and BODY parameters failed: %s", resp)
+	}
+
+	// Test case insensitivity
+	_, _ = fmt.Fprintf(clientConn, "RSET\r\n")
+	_, _ = reader.ReadString('\n')
+
+	_, _ = fmt.Fprintf(clientConn, "MAIL FROM:<sender@example.com> body=8bitmime\r\n")
+	resp, _ = reader.ReadString('\n')
+	if !strings.HasPrefix(resp, "250") {
+		t.Errorf("MAIL FROM with lowercase body parameter failed: %s", resp)
+	}
+
+	// Clean up
+	_, _ = fmt.Fprintf(clientConn, "QUIT\r\n")
+	_, _ = reader.ReadString('\n')
+	_ = clientConn.Close()
+
+	// Also test via the original connection
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME", "250")
+	cmdCode(t, conn, "RCPT TO:<recipient@example.com>", "250")
+
+	cmdCode(t, conn, "RSET", "250")
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=7BIT", "250")
+
+	cmdCode(t, conn, "RSET", "250")
+	cmdCode(t, conn, "MAIL FROM:<sender@example.com> BODY=8BITMIME SIZE=5000", "250")
+
+	cmdCode(t, conn, "QUIT", "221")
+	_ = conn.Close()
 }
 
 // func createTmpFile(content string) (file *os.File, err error) {
@@ -1597,4 +1759,173 @@ func TestCmdShutdown(t *testing.T) {
 	}
 
 	_ = conn.Close()
+}
+
+type mockDropRejectedHandler struct {
+	handlerCalled int
+	lastFrom      string
+	lastTo        []string
+	msgIDCalled   int
+	lastMsgIDFrom string
+	lastMsgIDTo   []string
+}
+
+func (m *mockDropRejectedHandler) handler(remoteAddr net.Addr, from string, to []string, data []byte) error {
+	m.handlerCalled++
+	m.lastFrom = from
+	m.lastTo = append([]string{}, to...) // copy slice
+	return nil
+}
+
+func (m *mockDropRejectedHandler) msgIDHandler(remoteAddr net.Addr, from string, to []string, data []byte, username *string) (string, error) {
+	m.msgIDCalled++
+	m.lastMsgIDFrom = from
+	m.lastMsgIDTo = append([]string{}, to...) // copy slice
+	return "test-message-id", nil
+}
+
+// Test the IgnoreRejectedRecipients option
+func TestIgnoreRejectedRecipients(t *testing.T) {
+	tests := []struct {
+		name                      string
+		IgnoreRejectedRecipients  bool
+		handlerRcpt               func(net.Addr, string, string) bool
+		rcptCommands              []struct{ addr, expectedCode string }
+		expectedHandlerCalls      int
+		expectedHandlerRecipients []string
+		useMsgIDHandler           bool
+	}{
+		{
+			name:                     "Disabled_DefaultBehavior",
+			IgnoreRejectedRecipients: false,
+			handlerRcpt: func(remoteAddr net.Addr, from string, to string) bool {
+				return !strings.HasSuffix(to, "@rejected.com")
+			},
+			rcptCommands: []struct{ addr, expectedCode string }{
+				{"valid@example.com", "250"},
+				{"invalid@rejected.com", "550"},
+			},
+			expectedHandlerCalls:      1,
+			expectedHandlerRecipients: []string{"valid@example.com"},
+		},
+		{
+			name:                     "Enabled_MixedRecipients",
+			IgnoreRejectedRecipients: true,
+			handlerRcpt: func(remoteAddr net.Addr, from string, to string) bool {
+				return !strings.HasSuffix(to, "@rejected.com")
+			},
+			rcptCommands: []struct{ addr, expectedCode string }{
+				{"valid1@example.com", "250"},
+				{"valid2@example.com", "250"},
+				{"invalid1@rejected.com", "250"}, // Now accepted but dropped
+				{"invalid2@rejected.com", "250"}, // Now accepted but dropped
+			},
+			expectedHandlerCalls:      1,
+			expectedHandlerRecipients: []string{"valid1@example.com", "valid2@example.com"},
+		},
+		{
+			name:                     "Enabled_AllRejected",
+			IgnoreRejectedRecipients: true,
+			handlerRcpt: func(remoteAddr net.Addr, from string, to string) bool {
+				return false // Reject all
+			},
+			rcptCommands: []struct{ addr, expectedCode string }{
+				{"test1@example.com", "250"}, // Accepted but dropped
+				{"test2@example.com", "250"}, // Accepted but dropped
+			},
+			expectedHandlerCalls:      0, // No handler calls since all rejected
+			expectedHandlerRecipients: nil,
+		},
+		{
+			name:                     "Enabled_OnlyValid",
+			IgnoreRejectedRecipients: true,
+			handlerRcpt: func(remoteAddr net.Addr, from string, to string) bool {
+				return strings.HasSuffix(to, "@valid.com")
+			},
+			rcptCommands: []struct{ addr, expectedCode string }{
+				{"user1@valid.com", "250"},
+				{"user2@valid.com", "250"},
+				{"user3@valid.com", "250"},
+			},
+			expectedHandlerCalls:      1,
+			expectedHandlerRecipients: []string{"user1@valid.com", "user2@valid.com", "user3@valid.com"},
+		},
+		{
+			name:                     "Enabled_WithMsgIDHandler",
+			IgnoreRejectedRecipients: true,
+			handlerRcpt: func(remoteAddr net.Addr, from string, to string) bool {
+				return !strings.HasSuffix(to, "@rejected.com")
+			},
+			rcptCommands: []struct{ addr, expectedCode string }{
+				{"valid@example.com", "250"},
+				{"invalid@rejected.com", "250"}, // Accepted but dropped
+			},
+			expectedHandlerCalls:      1,
+			expectedHandlerRecipients: []string{"valid@example.com"},
+			useMsgIDHandler:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDropRejectedHandler{}
+
+			server := &Server{
+				Hostname:                 "mail.example.com",
+				AppName:                  "TestMail",
+				MaxRecipients:            100,
+				HandlerRcpt:              tt.handlerRcpt,
+				IgnoreRejectedRecipients: tt.IgnoreRejectedRecipients,
+			}
+
+			if tt.useMsgIDHandler {
+				server.MsgIDHandler = mock.msgIDHandler
+			} else {
+				server.Handler = mock.handler
+			}
+
+			conn := newConn(t, server)
+			defer func() { _ = conn.Close() }()
+
+			cmdCode(t, conn, "HELO host.example.com", "250")
+			cmdCode(t, conn, "MAIL FROM:<sender@example.com>", "250")
+
+			// Send RCPT commands
+			for _, rcpt := range tt.rcptCommands {
+				cmdCode(t, conn, "RCPT TO:<"+rcpt.addr+">", rcpt.expectedCode)
+			}
+
+			// Send DATA
+			cmdCode(t, conn, "DATA", "354")
+			cmdCode(t, conn, "Subject: Test\r\n\r\nTest message\r\n.", "250")
+			cmdCode(t, conn, "QUIT", "221")
+
+			// Verify handler calls
+			if tt.useMsgIDHandler {
+				if mock.msgIDCalled != tt.expectedHandlerCalls {
+					t.Errorf("Expected %d MsgIDHandler calls, got %d", tt.expectedHandlerCalls, mock.msgIDCalled)
+				}
+				if tt.expectedHandlerCalls > 0 {
+					if mock.lastMsgIDFrom != "sender@example.com" {
+						t.Errorf("Expected from 'sender@example.com', got '%s'", mock.lastMsgIDFrom)
+					}
+					if !reflect.DeepEqual(mock.lastMsgIDTo, tt.expectedHandlerRecipients) {
+						t.Errorf("Expected recipients %v, got %v", tt.expectedHandlerRecipients, mock.lastMsgIDTo)
+					}
+				}
+			} else {
+				if mock.handlerCalled != tt.expectedHandlerCalls {
+					t.Errorf("Expected %d handler calls, got %d", tt.expectedHandlerCalls, mock.handlerCalled)
+				}
+				if tt.expectedHandlerCalls > 0 {
+					if mock.lastFrom != "sender@example.com" {
+						t.Errorf("Expected from 'sender@example.com', got '%s'", mock.lastFrom)
+					}
+					if !reflect.DeepEqual(mock.lastTo, tt.expectedHandlerRecipients) {
+						t.Errorf("Expected recipients %v, got %v", tt.expectedHandlerRecipients, mock.lastTo)
+					}
+				}
+			}
+		})
+	}
 }

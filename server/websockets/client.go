@@ -34,8 +34,11 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    1024,
 	WriteBufferSize:   1024,
-	CheckOrigin:       func(r *http.Request) bool { return true }, // allow multi-domain
-	EnableCompression: true,                                       // experimental compression
+	EnableCompression: true,
+	CheckOrigin: func(_ *http.Request) bool {
+		// origin is checked via server.go's CORS settings
+		return true
+	},
 }
 
 // Client is a middleman between the websocket connection and the hub.
@@ -95,7 +98,7 @@ func (c *Client) writePump() {
 
 			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
-			for i := 0; i < n; i++ {
+			for range n {
 				_, _ = w.Write(newline)
 				_, _ = w.Write(<-c.send)
 			}
@@ -144,5 +147,5 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 func basicAuthResponse(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="Login"`)
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte("Unauthorised.\n"))
+	_, _ = w.Write([]byte("Unauthorized.\n"))
 }

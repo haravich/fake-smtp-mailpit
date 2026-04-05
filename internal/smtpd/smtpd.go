@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log"
 	"net"
+	"net/mail"
 	"os"
 	"regexp"
 	"strconv"
@@ -92,26 +93,27 @@ type LogFunc func(remoteIP, verb, line string)
 
 // Server is an SMTP server.
 type Server struct {
-	Addr              string // TCP address to listen on, defaults to ":25" (all addresses, port 25) if empty
-	AppName           string
-	AuthHandler       AuthHandler
-	AuthMechs         map[string]bool // Override list of allowed authentication mechanisms. Currently supported: LOGIN, PLAIN, CRAM-MD5. Enabling LOGIN and PLAIN will reduce RFC 4954 compliance.
-	AuthRequired      bool            // Require authentication for every command except AUTH, EHLO, HELO, NOOP, RSET or QUIT as per RFC 4954. Ignored if AuthHandler is not configured.
-	DisableReverseDNS bool            // Disable reverse DNS lookups, enforces "unknown" hostname
-	Handler           Handler
-	HandlerRcpt       HandlerRcpt
-	Hostname          string
-	LogRead           LogFunc
-	LogWrite          LogFunc
-	MaxSize           int // Maximum message size allowed, in bytes
-	MaxRecipients     int // Maximum number of recipients, defaults to 100.
-	MsgIDHandler      MsgIDHandler
-	Timeout           time.Duration
-	TLSConfig         *tls.Config
-	TLSListener       bool        // Listen for incoming TLS connections only (not recommended as it may reduce compatibility). Ignored if TLS is not configured.
-	TLSRequired       bool        // Require TLS for every command except NOOP, EHLO, STARTTLS, or QUIT as per RFC 3207. Ignored if TLS is not configured.
-	Protocol          string      // Default tcp, supports unix
-	SocketPerm        fs.FileMode // if using Unix socket, socket permissions
+	Addr                     string // TCP address to listen on, defaults to ":25" (all addresses, port 25) if empty
+	AppName                  string
+	AuthHandler              AuthHandler
+	AuthMechs                map[string]bool // Override list of allowed authentication mechanisms. Currently supported: LOGIN, PLAIN, CRAM-MD5. Enabling LOGIN and PLAIN will reduce RFC 4954 compliance.
+	AuthRequired             bool            // Require authentication for every command except AUTH, EHLO, HELO, NOOP, RSET or QUIT as per RFC 4954. Ignored if AuthHandler is not configured.
+	DisableReverseDNS        bool            // Disable reverse DNS lookups, enforces "unknown" hostname
+	Handler                  Handler
+	HandlerRcpt              HandlerRcpt
+	Hostname                 string
+	LogRead                  LogFunc
+	LogWrite                 LogFunc
+	MaxSize                  int // Maximum message size allowed, in bytes
+	MaxRecipients            int // Maximum number of recipients, defaults to 100.
+	MsgIDHandler             MsgIDHandler
+	IgnoreRejectedRecipients bool // Accept emails to rejected recipients with 2xx response but silently drop them
+	Timeout                  time.Duration
+	TLSConfig                *tls.Config
+	TLSListener              bool        // Listen for incoming TLS connections only (not recommended as it may reduce compatibility). Ignored if TLS is not configured.
+	TLSRequired              bool        // Require TLS for every command except NOOP, EHLO, STARTTLS, or QUIT as per RFC 3207. Ignored if TLS is not configured.
+	Protocol                 string      // Default tcp, supports unix
+	SocketPerm               fs.FileMode // if using Unix socket, socket permissions
 
 	inShutdown   int32 // server was closed or shutdown
 	openSessions int32 // count of open sessions
@@ -335,7 +337,7 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 	timer := time.NewTimer(100 * time.Millisecond)
 	defer timer.Stop()
 
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		// wait for open sessions to close
 		if atomic.LoadInt32(&srv.openSessions) == 0 {
 			break
@@ -360,9 +362,11 @@ func (s *session) serve() {
 	// otherwise results in a 5s timeout for each connection
 	defer func(c net.Conn) { _ = c.Close() }(s.conn)
 
+	var gotEHLO bool
 	var from string
-	var gotFrom bool
+	var gotFROM bool
 	var to []string
+	var hasRejectedRecipients bool
 	var buffer bytes.Buffer
 
 	// RFC 5321 specifies support for minimum of 100 recipients is required.
@@ -394,18 +398,22 @@ loop:
 			s.writef("250 %s greets %s", s.srv.Hostname, s.remoteName)
 
 			// RFC 2821 section 4.1.4 specifies that EHLO has the same effect as RSET, so reset for HELO too.
+			gotEHLO = true
 			from = ""
-			gotFrom = false
+			gotFROM = false
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "EHLO":
 			s.remoteName = args
 			s.writef("%s", s.makeEHLOResponse())
 
 			// RFC 2821 section 4.1.4 specifies that EHLO has the same effect as RSET.
+			gotEHLO = true
 			from = ""
-			gotFrom = false
+			gotFROM = false
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "MAIL":
 			if s.srv.TLSConfig != nil && s.srv.TLSRequired && !s.tls {
@@ -416,10 +424,22 @@ loop:
 				s.writef("530 5.7.0 Authentication required")
 				break
 			}
+			if !gotEHLO {
+				s.writef("503 5.5.1 Bad sequence of commands (HELO/EHLO required before MAIL)")
+				break
+			}
+			if to != nil {
+				s.writef("503 5.5.1 Bad sequence of commands (RSET/HELO/EHLO required before MAIL)")
+				break
+			}
 
-			match := mailFromRE.FindStringSubmatch(args)
+			match, err := extractAndValidateAddress(mailFromRE, args)
 			if match == nil {
-				s.writef("501 5.5.4 Syntax error in parameters or arguments (invalid FROM parameter)")
+				if err != nil {
+					s.writef("%s", err.Error())
+				} else {
+					s.writef("501 5.5.4 Syntax error in parameters or arguments (invalid FROM parameter)")
+				}
 			} else {
 				// Mailpit Chaos
 				if fail, code := chaos.Config.Sender.Trigger(); fail {
@@ -433,7 +453,7 @@ loop:
 					if sizeMatch == nil {
 						// ignore other parameter
 						from = match[1]
-						gotFrom = true
+						gotFROM = true
 						s.writef("250 2.1.0 Ok")
 					} else {
 						// Enforce the maximum message size if one is set.
@@ -445,18 +465,19 @@ loop:
 							s.writef("%s", err.Error())
 						} else { // SIZE ok
 							from = match[1]
-							gotFrom = true
+							gotFROM = true
 							s.writef("250 2.1.0 Ok")
 						}
 					}
 				} else { // No parameters after FROM
 					from = match[1]
-					gotFrom = true
+					gotFROM = true
 					s.writef("250 2.1.0 Ok")
 				}
 			}
 
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "RCPT":
 			if s.srv.TLSConfig != nil && s.srv.TLSRequired && !s.tls {
@@ -467,14 +488,18 @@ loop:
 				s.writef("530 5.7.0 Authentication required")
 				break
 			}
-			if !gotFrom {
+			if !gotFROM {
 				s.writef("503 5.5.1 Bad sequence of commands (MAIL required before RCPT)")
 				break
 			}
 
-			match := rcptToRE.FindStringSubmatch(args)
+			match, err := extractAndValidateAddress(rcptToRE, args)
 			if match == nil {
-				s.writef("501 5.5.4 Syntax error in parameters or arguments (invalid TO parameter)")
+				if err != nil {
+					s.writef("%s", err.Error())
+				} else {
+					s.writef("501 5.5.4 Syntax error in parameters or arguments (invalid TO parameter)")
+				}
 			} else {
 				// Mailpit Chaos
 				if fail, code := chaos.Config.Recipient.Trigger(); fail {
@@ -492,6 +517,9 @@ loop:
 					if accept {
 						to = append(to, match[1])
 						s.writef("250 2.1.5 Ok")
+					} else if s.srv.IgnoreRejectedRecipients {
+						hasRejectedRecipients = true
+						s.writef("250 2.1.5 Ok")
 					} else {
 						s.writef("550 5.1.0 Requested action not taken: mailbox unavailable")
 					}
@@ -506,7 +534,8 @@ loop:
 				s.writef("530 5.7.0 Authentication required")
 				break
 			}
-			if !gotFrom || len(to) == 0 {
+			hasRecipients := len(to) > 0 || hasRejectedRecipients
+			if !gotFROM || !hasRecipients {
 				s.writef("503 5.5.1 Bad sequence of commands (MAIL & RCPT required before DATA)")
 				break
 			}
@@ -536,11 +565,13 @@ loop:
 
 			// Create Received header & write message body into buffer.
 			buffer.Reset()
-			buffer.Write(s.makeHeaders(to))
+			if len(to) > 0 {
+				buffer.Write(s.makeHeaders(to))
+			}
 			buffer.Write(data)
 
-			// Pass mail on to handler.
-			if s.srv.Handler != nil {
+			// Pass mail on to handler only if there are valid recipients.
+			if len(to) > 0 && s.srv.Handler != nil {
 				err := s.srv.Handler(s.conn.RemoteAddr(), from, to, buffer.Bytes())
 				if err != nil {
 					checkErrFormat := regexp.MustCompile(`^([2-5][0-9]{2})[\s\-](.+)$`)
@@ -552,7 +583,7 @@ loop:
 					break
 				}
 				s.writef("250 2.0.0 Ok: queued")
-			} else if s.srv.MsgIDHandler != nil {
+			} else if len(to) > 0 && s.srv.MsgIDHandler != nil {
 				msgID, err := s.srv.MsgIDHandler(s.conn.RemoteAddr(), from, to, buffer.Bytes(), s.username)
 				if err != nil {
 					checkErrFormat := regexp.MustCompile(`^([2-5][0-9]{2})[\s\-](.+)$`)
@@ -570,13 +601,21 @@ loop:
 					s.writef("250 2.0.0 Ok: queued")
 				}
 			} else {
+				if hasRejectedRecipients && Debug {
+					if s.srv.LogWrite != nil {
+						s.srv.LogWrite(s.remoteIP, "DEBUG", "Message from sender silently dropped (rejected recipients)")
+					} else {
+						log.Printf("%s DEBUG Message from sender silently dropped (rejected recipients)", s.remoteIP)
+					}
+				}
 				s.writef("250 2.0.0 Ok: queued")
 			}
 
 			// Reset for next mail.
 			from = ""
-			gotFrom = false
+			gotFROM = false
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "QUIT":
 			s.writef("221 2.0.0 %s %s ESMTP Service closing transmission channel", s.srv.Hostname, s.srv.AppName)
@@ -588,16 +627,17 @@ loop:
 			}
 			s.writef("250 2.0.0 Ok")
 			from = ""
-			gotFrom = false
+			gotFROM = false
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "NOOP":
 			s.writef("250 2.0.0 Ok")
 		case "XCLIENT":
 			s.xClient = args
 			if s.xClientTrust {
-				xCArgs := strings.Split(args, " ")
-				for _, xCArg := range xCArgs {
+				xCArgs := strings.SplitSeq(args, " ")
+				for xCArg := range xCArgs {
 					xCParse := strings.Split(strings.TrimSpace(xCArg), "=")
 					if strings.ToUpper(xCParse[0]) == "ADDR" && (net.ParseIP(xCParse[1]) != nil) {
 						s.xClientADDR = xCParse[1]
@@ -664,8 +704,9 @@ loop:
 			// RFC 3207 specifies that the server must discard any prior knowledge obtained from the client.
 			s.remoteName = ""
 			from = ""
-			gotFrom = false
+			gotFROM = false
 			to = nil
+			hasRejectedRecipients = false
 			buffer.Reset()
 		case "AUTH":
 			if s.srv.TLSConfig != nil && s.srv.TLSRequired && !s.tls {
@@ -685,7 +726,7 @@ loop:
 			}
 
 			// RFC 4954 specifies that AUTH is not permitted during mail transactions.
-			if gotFrom || len(to) > 0 {
+			if gotFROM || len(to) > 0 {
 				s.writef("503 5.5.1 Bad sequence of commands (AUTH not permitted during mail transaction)")
 				break
 			}
@@ -745,7 +786,7 @@ loop:
 }
 
 // Wrapper function for writing a complete line to the socket.
-func (s *session) writef(format string, args ...interface{}) {
+func (s *session) writef(format string, args ...any) {
 	if s.srv.Timeout > 0 {
 		_ = s.conn.SetWriteDeadline(time.Now().Add(s.srv.Timeout))
 	}
@@ -790,9 +831,9 @@ func (s *session) readLine() (string, error) {
 
 // Parse a line read from the socket.
 func (s *session) parseLine(line string) (verb string, args string) {
-	if idx := strings.Index(line, " "); idx != -1 {
-		verb = strings.ToUpper(line[:idx])
-		args = strings.TrimSpace(line[idx+1:])
+	if before, after, ok := strings.Cut(line, " "); ok {
+		verb = strings.ToUpper(before)
+		args = strings.TrimSpace(after)
 	} else {
 		verb = strings.ToUpper(line)
 		args = ""
@@ -887,6 +928,10 @@ func (s *session) makeEHLOResponse() (response string) {
 	}
 
 	response += "250-ENHANCEDSTATUSCODES\r\n"
+	// RFC 6531 specifies that the presence of SMTPUTF8 should include 8BITMIME
+	// "Servers offering this extension MUST provide support for, and announce, the 8BITMIME extension"
+	// https://www.rfc-editor.org/rfc/rfc6531#section-3.1:
+	response += "250-8BITMIME\r\n"
 	response += "250 SMTPUTF8" // last entry must use a space instead of a dash
 	return
 }
@@ -954,6 +999,12 @@ func (s *session) handleAuthPlain(arg string) (bool, error) {
 
 	// Validate credentials.
 	authenticated, err := s.srv.AuthHandler(s.conn.RemoteAddr(), "PLAIN", parts[1], parts[2], nil)
+	if authenticated {
+		uname := string(parts[1])
+		s.username = &uname
+	} else {
+		s.username = nil
+	}
 
 	return authenticated, err
 }
@@ -986,4 +1037,36 @@ func (s *session) handleAuthCramMD5() (bool, error) {
 	authenticated, err := s.srv.AuthHandler(s.conn.RemoteAddr(), "CRAM-MD5", []byte(fields[0]), []byte(fields[1]), []byte(shared))
 
 	return authenticated, err
+}
+
+// Extract and validate email address from a regex match.
+// This ensures that only RFC 5322 compliant email addresses are accepted (if set).
+func extractAndValidateAddress(re *regexp.Regexp, args string) ([]string, error) {
+	match := re.FindStringSubmatch(args)
+	if match == nil {
+		return nil, nil
+	}
+
+	if strings.Contains(match[1], " ") {
+		return nil, errors.New("553 5.1.3 The address is not a valid RFC 5321 address")
+	}
+
+	// first argument will be the email address, validate it if not empty
+	if match[1] != "" {
+		a, err := mail.ParseAddress(match[1])
+		if err != nil {
+			return nil, errors.New("553 5.1.3 The address is not a valid RFC 5321 address")
+		}
+
+		// https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.3.1
+		// RFC states that the local part of an email address SHOULD not exceed 64 characters
+		// and the domain part SHOULD not exceed 255 characters, however as per https://github.com/axllent/mailpit/issues/620
+		// it appears that investigated mail servers do not actually implement this limit, but rather enforce
+		// a much larger limit (ie: 1024 characters).
+		if len(a.Address) > 1024 {
+			return nil, errors.New("500 The address is too long")
+		}
+	}
+
+	return match, nil
 }

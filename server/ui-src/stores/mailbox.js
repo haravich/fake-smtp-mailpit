@@ -2,6 +2,21 @@
 
 import { reactive, watch } from "vue";
 
+// Parse and validate a string[] from localStorage, returning [] on any invalid value.
+const storageToStringArray = (key) => {
+	try {
+		const raw = localStorage.getItem(key);
+		if (!raw) return [];
+		const parsed = JSON.parse(raw);
+		if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+			return parsed;
+		}
+	} catch {
+		// ignore malformed JSON
+	}
+	return [];
+};
+
 // global mailbox info
 export const mailbox = reactive({
 	total: 0, // total number of messages in database
@@ -20,6 +35,7 @@ export const mailbox = reactive({
 	appInfo: {}, // application information
 	uiConfig: {}, // configuration for UI
 	lastMessage: false, // return scrolling
+	defaultReleaseAddresses: storageToStringArray("defaultReleaseAddresses"), // default release addresses for released messages
 
 	// settings
 	showTagColors: !localStorage.getItem("hideTagColors"),
@@ -29,6 +45,7 @@ export const mailbox = reactive({
 	timeZone: localStorage.getItem("timeZone")
 		? localStorage.getItem("timeZone")
 		: Intl.DateTimeFormat().resolvedOptions().timeZone,
+	showAttachmentDetails: localStorage.getItem("showAttachmentDetails"), // show attachment details
 });
 
 watch(
@@ -83,12 +100,34 @@ watch(
 );
 
 watch(
+	() => mailbox.defaultReleaseAddresses,
+	(v) => {
+		if (v.length) {
+			localStorage.setItem("defaultReleaseAddresses", JSON.stringify(v));
+		} else {
+			localStorage.removeItem("defaultReleaseAddresses");
+		}
+	},
+);
+
+watch(
 	() => mailbox.timeZone,
 	(v) => {
 		if (v === Intl.DateTimeFormat().resolvedOptions().timeZone) {
 			localStorage.removeItem("timeZone");
 		} else {
 			localStorage.setItem("timeZone", v);
+		}
+	},
+);
+
+watch(
+	() => mailbox.showAttachmentDetails,
+	(v) => {
+		if (v) {
+			localStorage.setItem("showAttachmentDetails", "1");
+		} else {
+			localStorage.removeItem("showAttachmentDetails");
 		}
 	},
 );

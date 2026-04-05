@@ -84,6 +84,43 @@ func TestPOP3(t *testing.T) {
 		}
 	}
 
+	t.Log("Checking UIDL with multiple arguments")
+
+	_, err = c.Cmd("UIDL", false, 1, 2, 3)
+	if err == nil {
+		t.Error("UIDL with multiple arguments should return an error")
+		return
+	}
+
+	t.Log("Checking UIDL without a message id")
+
+	messageIDs, err := c.Uidl(0)
+	if err != nil {
+		t.Error(err.Error())
+		return
+	}
+
+	if len(messageIDs) != 50 {
+		assertEqual(t, len(messageIDs), 50, "incorrect UIDL message count")
+	}
+
+	t.Log("Checking UIDL with a message ID")
+
+	messageIDs, err = c.Uidl(50)
+	if err != nil {
+		t.Error(err.Error())
+		return
+	}
+
+	assertEqual(t, len(messageIDs), 1, "incorrect UIDL message count")
+
+	t.Log("Checking UIDL with an invalid message ID")
+
+	if _, err := c.Uidl(51); err == nil {
+		t.Errorf("UIDL 51 should return an error")
+		return
+	}
+
 	t.Log("Deleting 25 messages")
 
 	for i := 1; i <= 25; i++ {
@@ -325,11 +362,11 @@ func randRange(min, max int) int {
 }
 
 func insertEmailData(t *testing.T) {
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		msg := enmime.Builder().
 			From(fmt.Sprintf("From %d", i), fmt.Sprintf("from-%d@example.com", i)).
 			Subject(fmt.Sprintf("Subject line %d end", i)).
-			Text([]byte(fmt.Sprintf("This is the email body %d <jdsauk;dwqmdqw;>.", i))).
+			Text(fmt.Appendf(nil, "This is the email body %d <jdsauk;dwqmdqw;>.", i)).
 			To(fmt.Sprintf("To %d", i), fmt.Sprintf("to-%d@example.com", i))
 
 		env, err := msg.Build()
@@ -360,7 +397,7 @@ func insertEmailData(t *testing.T) {
 	}
 }
 
-func assertEqual(t *testing.T, a interface{}, b interface{}, message string) {
+func assertEqual(t *testing.T, a any, b any, message string) {
 	if a == b {
 		return
 	}

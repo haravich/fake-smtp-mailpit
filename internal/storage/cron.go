@@ -16,6 +16,14 @@ import (
 
 // Database cron runs every minute
 func dbCron() {
+	if config.DisableAutoVACUUM {
+		if sqlDriver == "rqlite" {
+			logger.Log().Warn("[db] disable-auto-vacuum has no effect as rqlite handles vacuuming automatically")
+		} else {
+			logger.Log().Infof("[db] auto-VACUUM is disabled")
+		}
+	}
+
 	for {
 		time.Sleep(60 * time.Second)
 
@@ -35,7 +43,7 @@ func dbCron() {
 					deletedPercent = float64(deletedSize * 100 / total)
 				}
 				// only vacuum the DB if at least 1% of mail storage size has been deleted
-				if deletedPercent >= 1 {
+				if !config.DisableAutoVACUUM && deletedPercent >= 1 {
 					logger.Log().Debugf("[db] deleted messages is %f%% of total size, reclaim space", deletedPercent)
 					vacuumDb()
 				}
@@ -128,7 +136,10 @@ func pruneMessages() {
 		return
 	}
 
-	args := make([]interface{}, len(ids))
+	// roll back if it fails
+	defer func() { _ = tx.Rollback() }()
+
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
@@ -151,13 +162,8 @@ func pruneMessages() {
 		return
 	}
 
-	err = tx.Commit()
-
-	if err != nil {
+	if err = tx.Commit(); err != nil {
 		logger.Log().Errorf("[db] %s", err.Error())
-		if err := tx.Rollback(); err != nil {
-			logger.Log().Errorf("[db] %s", err.Error())
-		}
 	}
 
 	if err := pruneUnusedTags(); err != nil {
